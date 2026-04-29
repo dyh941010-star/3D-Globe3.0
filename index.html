@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tech Blue 3D Globe</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    background: radial-gradient(circle at center, rgba(8,18,38,0.18) 0%, rgba(0,0,0,0) 70%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "Inter", "Segoe UI", Arial, sans-serif;
+  }
+
+  .globe-wrapper {
+    position: relative;
+    width: 400px;
+    height: 400px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    filter: drop-shadow(0 0 28px rgba(0, 180, 255, 0.12));
+  }
+
+  canvas {
+    position: absolute;
+    inset: 0;
+    display: block;
+  }
+
+  #globe-2d-overlay { pointer-events: none; }
+
+  .globe-popup {
+    position: absolute;
+    top: 0;
+    left: 0;
+    padding: 8px 14px;
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0.4px;
+    color: #dff6ff;
+    background: linear-gradient(135deg, rgba(8,22,40,0.92), rgba(6,14,28,0.82));
+    border: 1px solid rgba(90, 220, 255, 0.45);
+    border-radius: 12px;
+    box-shadow:
+      0 0 18px rgba(0, 200, 255, 0.18),
+      inset 0 0 16px rgba(0, 140, 255, 0.08);
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transform: translate(-50%, -120%);
+    backdrop-filter: blur(10px);
+  }
+</style>
+</head>
+<body>
+
+<div class="globe-wrapper">
+  <canvas id="globe-3d"></canvas>
+  <canvas id="globe-2d-overlay"></canvas>
+  <div class="globe-popup" id="popup"></div>
+</div>
+
+<script type="module">
+import * as THREE from "https://esm.sh/three@0.133.1";
+import { OrbitControls } from "https://esm.sh/three@0.133.1/examples/jsm/controls/OrbitControls";
+import gsap from "https://esm.sh/gsap@3.12.5";
+
+const container = document.querySelector(".globe-wrapper");
+const canvas3D = document.getElementById("globe-3d");
+const canvas2D = document.getElementById("globe-2d-overlay");
+const popup = document.getElementById("popup");
+const ctx = canvas2D.getContext("2d");
+
+let renderer, scene, camera, controls, raycaster;
+let globe, globeHit, pointer, mapMaterial, halo;
+let mouse = new THREE.Vector2(-10, -10);
+let clock = new THREE.Clock();
+let clicked = false;
+let techLines = [];
+
+init();
+
+function init() {
+  renderer = new THREE.WebGLRenderer({
+    canvas: canvas3D,
+    alpha: true,
+    antialias: true
+  });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(400, 400);
+
+  scene = new THREE.Scene();
+
+  camera = new THREE.OrthographicCamera(-1.15, 1.15, 1.15, -1.15, 0.1, 10);
+  camera.position.set(0, 0, 2.2);
+
+  raycaster = new THREE.Raycaster();
+  raycaster.far = 5;
+
+  controls = new OrbitControls(camera, canvas3D);
+  controls.enablePan = false;
+  controls.enableZoom = false;
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.045;
+  controls.rotateSpeed = 0.35;
+  controls.autoRotate = true;
+  controls.autoRotateSpeed = 0.32;
+  controls.enableRotate = true;
+  controls.minPolarAngle = Math.PI / 2;
+  controls.maxPolarAngle = Math.PI / 2;
+
+  canvas2D.width = 400;
+  canvas2D.height = 400;
+
+  createHalo();
+  createGlobe();
+  createPointer();
+  createTechLines();
+  addEvents();
+  animate();
+}
+
+function createHalo() {
+  const geometry = new THREE.SphereGeometry(1.12, 48, 48);
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      u_time: { value: 0 }
+    },
+    vertexShader: `
+      varying vec3 vNormal;
+      varying vec3 vWorld;
+
+      void main() {
+        vNormal = normalize(normalMatrix * normal);
+        vec4 worldPos = modelMatrix * vec4(position, 1.0);
+        vWorld = worldPos.xyz;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform float u_time;
+      varying vec3 vNormal;
+      varying vec3 vWorld;
+
+      void main() {
+        vec3 viewDir = normalize(cameraPosition - vWorld);
+        float fresnel = pow(1.0 - max(dot(vNormal, viewDir), 0.0), 2.8);
+        float pulse = 0.88 + sin(u_time * 1.2) * 0.08;
+
+        vec3 glow = vec3(0.08, 0.58, 1.0) * fresnel * 0.34 * pulse;
+        gl_FragColor = vec4(glow, fresnel * 0.26 * pulse);
+      }
+    `,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    side: THREE.BackSide,
+    depthWrite: false
+  });
+
+  halo = new THREE.Mesh(geometry, material);
+  scene.add(halo);
+}
+
+function createGlobe() {
+  const texture = new THREE.TextureLoader().load("https://ksenia-k.com/img/earth-map-colored.png");
+  const geometry = new THREE.IcosahedronGeometry(1, 22);
+
+  mapMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      u_map_tex: { value: texture },
+      u_dot_size: { value: 8.0 },
+      u_pointer: { value: new THREE.Vector3(0, 0, 1) },
+      u_time_since_click: { value: 0 },
+      u_time: { value: 0 }
+    },
+    vertexShader: `
+      uniform sampler2D u_map_tex;
+      uniform float u_dot_size;
+      uniform float u_time_since_click;
+      uniform vec3 u_pointer;
+      uniform float u_time;
+
+      varying float vOpacity;
+      varying vec2 vUv;
+      varying float vPulse;
+
+      #define PI 3.14159265359
+
+      void main() {
+        vUv = uv;
+
+        float visibility = step(.2, texture2D(u_map_tex, uv).r);
+
+        float pulse = 0.82 + sin(u_time * 2.6 + position.x * 8.0 + position.y * 6.0 + position.z * 7.0) * 0.18;
+        vPulse = pulse;
+
+        gl_PointSize = visibility * u_dot_size * pulse;
+
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        vOpacity = (1. / length(mvPosition.xyz) - .7);
+        vOpacity = clamp(vOpacity, .1, 1.0);
+
+        float t = u_time_since_click - .1;
+        t = max(0., t);
+        float max_amp = .12;
+        float dist = 1. - .5 * length(position - u_pointer);
+        float damping = 1. / (1. + 20. * t);
+        float delta = max_amp * damping * sin(5. * t * (1. + 2. * dist) - PI);
+        delta *= 1. - smoothstep(.8, 1., dist);
+
+        vec3 pos = position * (1. + delta);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D u_map_tex;
+      varying float vOpacity;
+      varying vec2 vUv;
+      varying float vPulse;
+
+      void main() {
+        vec3 tex = texture2D(u_map_tex, vUv).rgb;
+
+        vec3 deepBlue = vec3(0.02, 0.18, 0.52);
+        vec3 cyanBlue = vec3(0.00, 0.56, 0.92);
+        vec3 iceBlue  = vec3(0.46, 0.90, 1.00);
+        vec3 electric = vec3(0.72, 0.98, 1.00);
+
+        float h = tex.r;
+
+        vec3 color = mix(deepBlue, cyanBlue, smoothstep(0.05, 0.45, h));
+        color = mix(color, iceBlue, smoothstep(0.35, 0.75, h));
+        color = mix(color, electric, smoothstep(0.72, 1.00, h));
+
+        float d = length(gl_PointCoord.xy - vec2(.5));
+        float dot = 1. - smoothstep(.30, .42, d);
+        if (dot < 0.42) discard;
+
+        float centerGlow = 1.0 - d;
+        color += electric * pow(centerGlow, 2.0) * 0.14 * vPulse;
+        color *= (0.9 + vPulse * 0.18);
+        color -= d * 0.14;
+
+        gl_FragColor = vec4(color, dot * vOpacity * (0.9 + vPulse * 0.12));
+      }
+    `,
+    transparent: true,
+    depthWrite: false
+  });
+
+  globe = new THREE.Points(geometry, mapMaterial);
+  scene.add(globe);
+
+  globeHit = new THREE.Mesh(
+    geometry,
+    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 })
+  );
+  scene.add(globeHit);
+}
+
+function createPointer() {
+  pointer = new THREE.Mesh(
+    new THREE.SphereGeometry(0.024, 18, 18),
+    new THREE.MeshBasicMaterial({
+      color: 0x8ffcff,
+      transparent: true,
+      opacity: 0
+    })
+  );
+  scene.add(pointer);
+}
+
+function createTechLines() {
+  for (let i = 0; i < 42; i++) {
+    const dir = new THREE.Vector3(
+      (Math.random() - 0.5) * 2,
+      (Math.random() - 0.5) * 2,
+      (Math.random() - 0.5) * 2
+    ).normalize();
+
+    const start = dir.clone().multiplyScalar(1.06);
+    const end = dir.clone().multiplyScalar(1.2 + Math.random() * 0.22);
+
+    const geometry = new THREE.BufferGeometry().setFromPoints([start, end]);
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        u_time: { value: 0 },
+        u_color: {
+          value: new THREE.Color(
+            0.08 + Math.random() * 0.10,
+            0.62 + Math.random() * 0.22,
+            1.0
+          )
+        },
+        u_offset: { value: Math.random() * Math.PI * 2 }
+      },
+      vertexShader: `
+        varying float vProgress;
+
+        void main() {
+          vProgress = position.z;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float u_time;
+        uniform vec3 u_color;
+        uniform float u_offset;
+        varying float vProgress;
+
+        void main() {
+          float scan = sin(u_time * 2.2 + vProgress * 8.0 + u_offset) * 0.5 + 0.5;
+          float alpha = 0.06 + scan * 0.22;
+          vec3 color = u_color + scan * 0.12;
+          gl_FragColor = vec4(color, alpha);
+        }
+      `,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+
+    const line = new THREE.Line(geometry, material);
+    line.userData = {
+      speed: 0.35 + Math.random() * 0.8,
+      offset: Math.random() * Math.PI * 2
+    };
+
+    scene.add(line);
+    techLines.push(line);
+  }
+}
+
+function addEvents() {
+  container.addEventListener("mousemove", (e) => {
+    const rect = container.getBoundingClientRect();
+    mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  });
+
+  container.addEventListener("click", () => {
+    raycaster.setFromCamera(mouse, camera);
+    const hits = raycaster.intersectObject(globeHit);
+
+    if (hits.length) {
+      const p = hits[0].face.normal.clone();
+      pointer.position.copy(p);
+      mapMaterial.uniforms.u_pointer.value.copy(p);
+      mapMaterial.uniforms.u_time_since_click.value = 0;
+      clock.start();
+
+      gsap.to(pointer.material, { opacity: 1, duration: 0.25 });
+
+      clicked = true;
+      popup.innerHTML = formatLatLng(p);
+      updatePopup();
+      popup.style.opacity = 1;
+    }
+  });
+}
+
+function updatePopup() {
+  if (!clicked) return;
+  const pos = pointer.position.clone().project(camera);
+  popup.style.left = `${(pos.x * 0.5 + 0.5) * 400}px`;
+  popup.style.top = `${(-pos.y * 0.5 + 0.5) * 400 - 14}px`;
+}
+
+function formatLatLng(pos) {
+  const lat = 90 - Math.acos(pos.y) * 180 / Math.PI;
+  const lng = ((270 + Math.atan2(pos.x, pos.z) * 180 / Math.PI) % 360) - 180;
+  return `${Math.abs(lat).toFixed(4)}° ${lat >= 0 ? "N" : "S"}, ${Math.abs(lng).toFixed(4)}° ${lng >= 0 ? "E" : "W"}`;
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  const t = clock.getElapsedTime();
+  mapMaterial.uniforms.u_time_since_click.value = t;
+  mapMaterial.uniforms.u_time.value = t;
+  halo.material.uniforms.u_time.value = t;
+
+  techLines.forEach(line => {
+    line.material.uniforms.u_time.value = t;
+    const pulse = 1 + Math.sin(t * line.userData.speed + line.userData.offset) * 0.08;
+    line.scale.setScalar(pulse);
+  });
+
+  ctx.clearRect(0, 0, 400, 400);
+
+  controls.update();
+  updatePopup();
+  renderer.render(scene, camera);
+}
+</script>
+</body>
+</html>
