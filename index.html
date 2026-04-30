@@ -170,7 +170,7 @@ function createHalo() {
 }
 
 function createGlobe() {
-  const texture = new THREE.TextureLoader().load("https://ksenia-k.com/img/earth-map-colored.png");
+  const texture = new THREE.TextureLoader().load("./earth-map-colored.png");
   const geometry = new THREE.IcosahedronGeometry(1, 24);
 
   mapMaterial = new THREE.ShaderMaterial({
