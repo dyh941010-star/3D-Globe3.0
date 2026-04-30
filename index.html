@@ -176,6 +176,8 @@ function createGlobe() {
     (err) => console.error("地图纹理加载失败:", err)
   );
 
+  texture.flipY = false;
+
   const geometry = new THREE.IcosahedronGeometry(1, 22);
 
   mapMaterial = new THREE.ShaderMaterial({
@@ -357,6 +359,7 @@ function addEvents() {
 
     if (hits.length) {
       const p = hits[0].face.normal.clone();
+
       pointer.position.copy(p);
       mapMaterial.uniforms.u_pointer.value.copy(p);
       mapMaterial.uniforms.u_time_since_click.value = 0;
@@ -368,6 +371,11 @@ function addEvents() {
       popup.innerHTML = formatLatLng(p);
       updatePopup();
       popup.style.opacity = 1;
+
+    } else if (clicked) {
+      gsap.to(pointer.material, { opacity: 0, duration: 0.25 });
+      popup.style.opacity = 0;
+      clicked = false;
     }
   });
 }
