@@ -89,12 +89,15 @@ let techLines = [];
 init();
 
 function init() {
+
+  const dpr = Math.min(window.devicePixelRatio, 2);
+
   renderer = new THREE.WebGLRenderer({
     canvas: canvas3D,
     alpha: true,
     antialias: true
   });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setPixelRatio(dpr);
   renderer.setSize(400, 400);
 
   scene = new THREE.Scene();
@@ -171,12 +174,12 @@ function createHalo() {
 
 function createGlobe() {
   const texture = new THREE.TextureLoader().load("./earth-map-colored.png");
-  const geometry = new THREE.IcosahedronGeometry(1, 28);
+  const geometry = new THREE.IcosahedronGeometry(1, 24);
 
   mapMaterial = new THREE.ShaderMaterial({
     uniforms: {
       u_map_tex: { value: texture },
-      u_dot_size: { value: 9.0 },
+      u_dot_size: { value: 7.0 * Math.min(window.devicePixelRatio, 2) },
       u_pointer: { value: new THREE.Vector3(0, 0, 1) },
       u_time_since_click: { value: 0 },
       u_time: { value: 0 }
