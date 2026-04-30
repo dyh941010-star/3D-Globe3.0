@@ -81,7 +81,8 @@ const ctx = canvas2D.getContext("2d");
 let renderer, scene, camera, controls, raycaster;
 let globe, globeHit, pointer, mapMaterial, halo;
 let mouse = new THREE.Vector2(-10, -10);
-let clock = new THREE.Clock();
+let globalClock = new THREE.Clock();
+let clickTime = 999;
 let clicked = false;
 let techLines = [];
 
@@ -111,7 +112,7 @@ function init() {
   controls.dampingFactor = 0.045;
   controls.rotateSpeed = 0.35;
   controls.autoRotate = true;
-  controls.autoRotateSpeed = 0.32;
+  controls.autoRotateSpeed = 0.42;
   controls.enableRotate = true;
   controls.minPolarAngle = Math.PI / 2;
   controls.maxPolarAngle = Math.PI / 2;
@@ -169,27 +170,13 @@ function createHalo() {
 }
 
 function createGlobe() {
-  const texture = new THREE.TextureLoader().load(
-    "./earth-map-black.png",
-    () => console.log("地图纹理加载成功"),
-    undefined,
-    (err) => console.error("地图纹理加载失败:", err)
-  );
-
-texture.flipY = false;
-texture.wrapS = THREE.RepeatWrapping;
-texture.wrapT = THREE.ClampToEdgeWrapping;
-texture.minFilter = THREE.LinearFilter;
-texture.magFilter = THREE.LinearFilter;
-texture.generateMipmaps = false;
-texture.minFilter = THREE.LinearFilter;
-
-const geometry = new THREE.IcosahedronGeometry(1, 28);
+  const texture = new THREE.TextureLoader().load("https://ksenia-k.com/img/earth-map-colored.png");
+  const geometry = new THREE.IcosahedronGeometry(1, 24);
 
   mapMaterial = new THREE.ShaderMaterial({
     uniforms: {
       u_map_tex: { value: texture },
-      u_dot_size: { value: 8.4 },
+      u_dot_size: { value: 8.0 },
       u_pointer: { value: new THREE.Vector3(0, 0, 1) },
       u_time_since_click: { value: 0 },
       u_time: { value: 0 }
@@ -208,16 +195,9 @@ const geometry = new THREE.IcosahedronGeometry(1, 28);
       #define PI 3.14159265359
 
       void main() {
-vec3 n = normalize(position);
+        vUv = uv;
 
-vec2 sphericalUv = vec2(
-  atan(-n.z, n.x) / (2.0 * PI) + 0.5,
-  asin(n.y) / PI + 0.5
-);
-
-vUv = sphericalUv;
-
-float visibility = step(0.08, texture2D(u_map_tex, sphericalUv).r);
+        float visibility = step(.2, texture2D(u_map_tex, uv).r);
 
         float pulse = 0.82 + sin(u_time * 2.6 + position.x * 8.0 + position.y * 6.0 + position.z * 7.0) * 0.18;
         vPulse = pulse;
@@ -231,7 +211,8 @@ float visibility = step(0.08, texture2D(u_map_tex, sphericalUv).r);
         float t = u_time_since_click - .1;
         t = max(0., t);
         float max_amp = .12;
-        float dist = 1. - .5 * length(position - u_pointer);
+        float dist = 1.0 - length(position - u_pointer) * 1.8;
+        dist = clamp(dist, 0.0, 1.0);
         float damping = 1. / (1. + 20. * t);
         float delta = max_amp * damping * sin(5. * t * (1. + 2. * dist) - PI);
         delta *= 1. - smoothstep(.8, 1., dist);
@@ -397,8 +378,8 @@ function addEvents() {
 
       pointer.position.copy(p);
       mapMaterial.uniforms.u_pointer.value.copy(p);
+      clickTime = 0;
       mapMaterial.uniforms.u_time_since_click.value = 0;
-      clock.start();
 
       gsap.to(pointer.material, { opacity: 1, duration: 0.25 });
 
@@ -449,9 +430,12 @@ function formatLatLng(pos) {
 function animate() {
   requestAnimationFrame(animate);
 
-  const t = clock.getElapsedTime();
-  mapMaterial.uniforms.u_time_since_click.value = t;
+  const t = globalClock.getElapsedTime();
+
+  if (clickTime < 999) clickTime += 0.016;
+
   mapMaterial.uniforms.u_time.value = t;
+  mapMaterial.uniforms.u_time_since_click.value = clickTime;
   halo.material.uniforms.u_time.value = t;
 
   techLines.forEach(line => {
