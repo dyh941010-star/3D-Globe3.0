@@ -176,9 +176,13 @@ function createGlobe() {
     (err) => console.error("地图纹理加载失败:", err)
   );
 
-  texture.flipY = false;
+texture.flipY = false;
+texture.wrapS = THREE.RepeatWrapping;
+texture.wrapT = THREE.ClampToEdgeWrapping;
+texture.minFilter = THREE.LinearFilter;
+texture.magFilter = THREE.LinearFilter;
 
-  const geometry = new THREE.IcosahedronGeometry(1, 22);
+const geometry = new THREE.IcosahedronGeometry(1, 22);
 
   mapMaterial = new THREE.ShaderMaterial({
     uniforms: {
